@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "Quan Ly Truyen",
+    "slug": "quanlytruyen-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#4f46e5"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.nhom3.quanlytruyen"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
