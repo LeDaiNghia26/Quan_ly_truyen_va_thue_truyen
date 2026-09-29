@@ -30,3 +30,6 @@ Thumbs.db
 
 # Temp docs extraction
 opencode/
+
+# QA project (separate repo)
+QA-QuanLyTruyen/
