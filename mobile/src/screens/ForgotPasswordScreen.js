@@ -15,6 +15,7 @@ export default function ForgotPasswordScreen() {
     setBusy(true);
     try {
       const r = await api.post('/auth/send-otp', { so_dien_thoai: sdt, loai: 'quen_mat_khau' });
+      // Mã OTP chỉ được trả về khi backend bật DEV_EXPOSE_OTP (chế độ demo).
       setOtpHint(r.data.ma_otp_hienthi || '');
       setStep(2);
     } catch (e) {

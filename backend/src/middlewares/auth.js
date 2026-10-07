@@ -10,17 +10,30 @@ function signToken(user) {
   );
 }
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
     return res.status(401).json({ message: 'Vui lòng đăng nhập.' });
   }
+  let payload;
   try {
-    const payload = jwt.verify(header.slice(7), process.env.JWT_SECRET);
-    req.user = payload;
-    next();
+    payload = jwt.verify(header.slice(7), process.env.JWT_SECRET);
   } catch (err) {
     return res.status(401).json({ message: 'Phiên đăng nhập hết hạn.' });
+  }
+  try {
+    // Token vẫn hợp lệ nhưng tài khoản có thể đã bị khóa sau khi phát hành.
+    // Không kiểm tra tài khoản ở tầng khác vì token vẫn đang tồn tại (mã có hạn 7 ngày).
+    const tk = await getTokenUser(payload.id);
+    if (!tk) return res.status(401).json({ message: 'Tài khoản không tồn tại.' });
+    if (tk.trang_thai === 'khoa') {
+      return res.status(403).json({ message: 'Tài khoản đã bị khóa.' });
+    }
+    // Vai trò lấy từ DB, không tin claim trong token (tránh token tự ý sửa quyền).
+    req.user = { id: tk.id, role: tk.vai_tro };
+    next();
+  } catch (err) {
+    return res.status(500).json({ message: 'Không xác minh được tài khoản. Vui lòng thử lại.' });
   }
 }
 

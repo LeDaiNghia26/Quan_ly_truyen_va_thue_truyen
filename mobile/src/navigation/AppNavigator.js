@@ -47,6 +47,11 @@ function AuthGate(Wrapped) {
   };
 }
 
+// Bản hiển thị trong Stack (có header) — dùng cho nút "Xem đơn của tôi" ở màn mã QR
+function MyReservationsStackScreen(props) {
+  return <MyReservationsScreen {...props} embedded />;
+}
+
 function MainTabs() {
   return (
     <Tab.Navigator screenOptions={{ headerShown: false, tabBarActiveTintColor: C.primary, tabBarInactiveTintColor: C.muted }}>
@@ -68,6 +73,7 @@ export default function AppNavigator() {
           <Stack.Screen name="Chi tiết truyện" component={DetailScreen} />
           <Stack.Screen name="Đặt trước" component={ReservationScreen} options={{ title: 'Đặt trước truyện' }} />
           <Stack.Screen name="Mã đặt trước" component={AuthGate(ReserveDetailScreen)} options={{ title: 'Mã đặt trước' }} />
+          <Stack.Screen name="Danh sách đặt trước" component={AuthGate(MyReservationsStackScreen)} options={{ title: 'Đơn đặt trước của tôi' }} />
           <Stack.Screen name="Đang thuê" component={AuthGate(RentalsScreen)} options={{ title: 'Đang thuê & Lịch sử' }} />
           <Stack.Screen name="VIP" component={AuthGate(VipScreen)} options={{ title: 'Tài khoản VIP & Điểm' }} />
           <Stack.Screen name="Thông báo" component={AuthGate(NotificationsScreen)} options={{ title: 'Thông báo' }} />

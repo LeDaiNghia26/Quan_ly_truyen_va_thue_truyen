@@ -1,8 +1,21 @@
 const { query, transaction } = require('../config/db');
+const { getKhachByAccountId } = require('./authController');
 const { getKhachById } = require('./discountHelper');
 const { tienMoiDiem, phanTramHang } = require('./cauHinhHelper');
 const { notify } = require('./thongBaoHelper');
 const { writeAudit } = require('./auditLogHelper');
+
+const NHAN_SU = ['admin', 'staff'];
+
+// Nhân viên (quản trị) được xem/hủy mọi đơn; khách chỉ được thao tác trên đơn của chính mình
+function laNhanSu(req) {
+  return !!req.user && NHAN_SU.includes(req.user.role);
+}
+
+// Mã khách có tài khoản đang đăng nhập (chỉ dùng cho role customer)
+async function maKhachCua(req) {
+  return getKhachByAccountId(req.user.id);
+}
 
 // Chuẩn hóa giờ hẹn lấy: nếu khung giờ có dạng "14:00-16:00" thì dùng giờ KẾT THÚC làm mốc giữ sách
 function chuanHanNhan(hanNhan, khungGio) {
@@ -18,8 +31,14 @@ function chuanHanNhan(hanNhan, khungGio) {
 }
 
 async function listDatTruoc(req, res) {
-  const { ma_khach_hang, trang_thai } = req.query;
+  const { trang_thai } = req.query;
   try {
+    let maKhach = req.query.ma_khach_hang;
+    // Khách không được xem đơn người khác: bỏ qua tham số, dùng mã khách của chính mình
+    if (!laNhanSu(req)) {
+      maKhach = await maKhachCua(req);
+      if (!maKhach) return res.status(403).json({ message: 'Không tìm thấy hồ sơ khách hàng.' });
+    }
     let sql =
       'SELECT dt.*, kh.ho_ten, GROUP_CONCAT(t.ten_truyen SEPARATOR ", ") AS danh_sach_truyen ' +
       'FROM dattruoc dt ' +
@@ -29,9 +48,9 @@ async function listDatTruoc(req, res) {
       'LEFT JOIN truyen t ON t.id = bs.ma_truyen ';
     const params = [];
     const conds = [];
-    if (ma_khach_hang) conds.push('dt.ma_khach_hang = ?');
+    if (maKhach) conds.push('dt.ma_khach_hang = ?');
     if (trang_thai) conds.push('dt.trang_thai = ?');
-    if (ma_khach_hang) params.push(ma_khach_hang);
+    if (maKhach) params.push(maKhach);
     if (trang_thai) params.push(trang_thai);
     if (conds.length) sql += ' WHERE ' + conds.join(' AND ');
     sql += ' GROUP BY dt.id, kh.ho_ten ORDER BY dt.id DESC';
@@ -45,15 +64,21 @@ async function listDatTruoc(req, res) {
 async function getDatTruoc(req, res) {
   const { id } = req.params;
   try {
+    const maKhach = laNhanSu(req) ? null : await maKhachCua(req);
+    if (!laNhanSu(req) && !maKhach) return res.status(403).json({ message: 'Không tìm thấy hồ sơ khách hàng.' });
     const [rows] = await query(
       'SELECT dt.*, kh.ho_ten, kh.diem_tich_luy, kh.hang_thanh_vien, sk.ten_su_kien FROM dattruoc dt ' +
       'JOIN khachhang kh ON kh.id = dt.ma_khach_hang ' +
       'LEFT JOIN sukiengiamgia sk ON sk.id = dt.ma_su_kien WHERE dt.id = ?',
       [id]
     );
+    // Trả 404 (không phải 403) để không lộ ra sự tồn tại của đơn khác
     if (rows.length === 0) return res.status(404).json({ message: 'Không tìm thấy đơn đặt trước.' });
+    if (maKhach && Number(rows[0].ma_khach_hang) !== Number(maKhach)) {
+      return res.status(404).json({ message: 'Không tìm thấy đơn đặt trước.' });
+    }
     const [chiTiet] = await query(
-      'SELECT bs.id AS ma_ban_sao, bs.ma_ban_sao AS ma_ban_sao_str, t.id AS ma_truyen, t.ten_truyen, t.gia_thue, t.gia_ban, t.tien_coc ' +
+      'SELECT bs.id AS ma_ban_sao, bs.ma_ban_sao AS ma_ban_sao_str, bs.tap, t.id AS ma_truyen, t.ten_truyen, t.gia_thue, t.gia_ban, t.tien_coc ' +
       'FROM chitietdattruoc cdt ' +
       'JOIN bansao bs ON bs.id = cdt.ma_ban_sao ' +
       'JOIN truyen t ON t.id = bs.ma_truyen WHERE cdt.ma_dat_truoc = ?',
@@ -103,7 +128,9 @@ async function createDatTruoc(req, res) {
         'SELECT id FROM bansao WHERE ma_truyen = ? AND trang_thai = "san_sang" ORDER BY id LIMIT 1 FOR UPDATE',
         [ma_truyen]
       );
-      if (bsRows.length === 0) throw Object.assign(new Error('Truyện hiện không còn bản nào sẵn sàng.'), { status: 409 });
+      if (bsRows.length === 0) {
+        throw Object.assign(new Error('Truyện hiện không còn bản nào sẵn sàng.'), { status: 409, code: 'OUT_OF_STOCK' });
+      }
 
       // ===== KHÓA TOÀN BỘ CAM KẾT TẠI THỜI ĐIỂM ĐẶT =====
       // Giá gốc, % giảm hạng, cọc, điểm tiêu, giảm sự kiện đều cố định lúc đặt;
@@ -169,21 +196,28 @@ async function createDatTruoc(req, res) {
       },
     });
   } catch (err) {
-    return res.status(err.status || 500).json({ message: err.message });
+    // Chỉ trả về thông điệp lỗi (để ghi status); log hệ thống không được lưu chi tiết DB cho client
+    if (err.status) return res.status(err.status).json({ message: err.message, code: err.code });
+    return res.status(500).json({ message: 'Lỗi máy chủ. Vui lòng thử lại.' });
   }
 }
 
 async function cancelDatTruoc(req, res) {
   const { id } = req.params;
-  const isNhanSu = req.user && ['admin', 'staff'].includes(req.user.role);
-  const lyDo = String((req.body.ly_do || '').trim());
+  const isNhanSu = laNhanSu(req);
+  const lyDo = String((req.body?.ly_do || '').trim());
   if (isNhanSu && !lyDo) {
     return res.status(400).json({ message: 'Vui lòng nhập lý do hủy đơn đặt trước.' });
   }
   try {
+    const maKhach = isNhanSu ? null : await maKhachCua(req);
+    if (!isNhanSu && !maKhach) return res.status(403).json({ message: 'Không tìm thấy hồ sơ khách hàng.' });
     await transaction(async (conn) => {
-      const [rows] = await conn.query('SELECT id, trang_thai FROM dattruoc WHERE id = ?', [id]);
+      const [rows] = await conn.query('SELECT id, ma_khach_hang, trang_thai FROM dattruoc WHERE id = ? FOR UPDATE', [id]);
       if (rows.length === 0) throw Object.assign(new Error('Không tìm thấy đơn đặt trước.'), { status: 404 });
+      if (maKhach && Number(rows[0].ma_khach_hang) !== Number(maKhach)) {
+        throw Object.assign(new Error('Không tìm thấy đơn đặt trước.'), { status: 404 });
+      }
       if (rows[0].trang_thai !== 'cho_nhan') {
         throw Object.assign(new Error('Đơn đặt trước này không còn ở trạng thái chờ nhận.'), { status: 400 });
       }
@@ -198,35 +232,49 @@ async function cancelDatTruoc(req, res) {
     });
     return res.json({ message: 'Đã hủy đơn đặt trước.' });
   } catch (err) {
-    return res.status(err.status || 500).json({ message: err.message });
+    if (err.status) return res.status(err.status).json({ message: err.message });
+    return res.status(500).json({ message: 'Lỗi máy chủ. Vui lòng thử lại.' });
   }
 }
 
 // Tự động hủy các đơn quá hạn giữ sách 2 giờ kể từ giờ hẹn lấy (gọi định kỳ hoặc khi mở hệ thống)
 async function autoExpireDatTruocAll() {
+  // Chỉ chọn truy vấn nhẹ trong (để nhanh). Sau đó lock và re-check từng đơn để tránh race với cancel/POS.
   const [rows] = await query(
-    'SELECT id, ma_khach_hang FROM dattruoc WHERE trang_thai = "cho_nhan" AND (han_nhan + INTERVAL 2 HOUR) < NOW()'
+    'SELECT id FROM dattruoc WHERE trang_thai = "cho_nhan" AND (han_nhan + INTERVAL 2 HOUR) < NOW()'
   );
+  let count = 0;
   for (const row of rows) {
-    const [cdt] = await query('SELECT ma_ban_sao FROM chitietdattruoc WHERE ma_dat_truoc = ?', [row.id]);
-    await transaction(async (conn) => {
-      for (const c of cdt) {
-        await conn.query('UPDATE bansao SET trang_thai = "san_sang" WHERE id = ?', [c.ma_ban_sao]);
-      }
-      await conn.query('UPDATE dattruoc SET trang_thai = "qua_han" WHERE id = ?', [row.id]);
-      if (row.ma_khach_hang) {
-        await notify(
-          conn,
-          row.ma_khach_hang,
-          'Đơn đặt trước hết hạn',
-          `Đơn đặt trước #${row.id} của bạn đã quá hạn giữ sách (2 giờ kể từ giờ hẹn lấy) và bị hủy tự động. Bạn có thể đặt lại bất cứ lúc nào!`,
-          'dat_truoc',
-          row.id
-        );
-      }
-    });
+    try {
+      await transaction(async (conn) => {
+        const [d] = await conn.query('SELECT id, ma_khach_hang, trang_thai FROM dattruoc WHERE id = ? FOR UPDATE', [row.id]);
+        if (d.length === 0 || d[0].trang_thai !== 'cho_nhan') {
+          // Đơn đã hủy/chuyển trạng thái thì bỏ qua
+          return;
+        }
+        const [cdt] = await conn.query('SELECT ma_ban_sao FROM chitietdattruoc WHERE ma_dat_truoc = ?', [row.id]);
+        // Chỉ trả bản sao về trạng thái sẵn sàng nếu nó đang bị giữ bất hợp lệ
+        for (const c of cdt) {
+          await conn.query('UPDATE bansao SET trang_thai = "san_sang" WHERE id = ? AND trang_thai = "dang_giu"', [c.ma_ban_sao]);
+        }
+        await conn.query('UPDATE dattruoc SET trang_thai = "qua_han" WHERE id = ?', [row.id]);
+        if (d[0].ma_khach_hang) {
+          await notify(
+            conn,
+            d[0].ma_khach_hang,
+            'Đơn đặt trước hết hạn',
+            `Đơn đặt trước #${row.id} của bạn đã quá hạn giữ sách (2 giờ kể từ giờ hẹn lấy) và bị hủy tự động. Bạn có thể đặt lại bất cứ lúc nào!`,
+            'dat_truoc',
+            row.id
+          );
+        }
+      });
+      count += 1;
+    } catch (e) {
+      // Bỏ qua đơn lỗi để job không bị dừng giữa chừng
+    }
   }
-  return rows.length;
+  return count;
 }
 
 async function autoExpireDatTruoc(req, res) {

@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api, { getErrorMessage } from '../api';
 import { fmt, fmtDate, Badge } from '../ui';
 
-const GIAM_HANG = { thuong: 0, than_thiet: 5, vip: 10 };
 const HANG_NHAN = { thuong: 'Thường', than_thiet: 'Thân thiết', vip: 'VIP' };
 
 function todayPlus(days) {
@@ -51,6 +50,7 @@ export default function POS() {
   const [suKiens, setSuKiens] = useState([]);
   const [maSuKien, setMaSuKien] = useState('');   // voucher áp cho cả phiếu
   const [maDatTruoc, setMaDatTruoc] = useState(null);
+  const [dtKhoa, setDtKhoa] = useState(null);
   const [scan, setScan] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
@@ -60,10 +60,22 @@ export default function POS() {
   const [phuongThuc, setPhuongThuc] = useState('tien_mat');
   const scanRef = useRef(null);
 
+  // % giảm theo hạng và giá trị quy đổi điểm phải lấy từ cấu hình server.
+  // Hardcode ở client làm số tiền hiển thị lệch với số tiền server thực tính khi lập phiếu.
+  const [giamHangTheoHang, setGiamHangTheoHang] = useState({});
+  const [tienMoiDiem, setTienMoiDiem] = useState(200);
+
   useEffect(() => { scanRef.current?.focus(); }, []);
   useEffect(() => {
     api.get('/su-kien-giam-gia/cong-khai').then((r) => setSuKiens(r.data.filter((s) => s.trang_thai === 'hoat_dong'))).catch(() => {});
     api.get('/ca-lam-viec/hien-tai').then((r) => setCa(r.data)).catch(() => {});
+    api.get('/cau-hinh').then((r) => {
+      const map = {};
+      for (const t of (r.data.hang_thanh_vien || [])) map[t.ma_hang] = Number(t.phan_tram_giam) || 0;
+      setGiamHangTheoHang(map);
+      const qd = (r.data.quy_doi || []).find((x) => x.ten_quy_tac === 'tien_moi_diem');
+      if (qd) setTienMoiDiem(Number(qd.gia_tri) || 200);
+    }).catch(() => {});
   }, []);
 
   // Nạp đơn đặt trước khi mở từ màn hình Đặt trước
@@ -75,6 +87,15 @@ export default function POS() {
         if (dt.trang_thai !== 'cho_nhan') { setMsg(`Đơn ${donTruoc} đã được xử lý (trạng thái: ${dt.trang_thai}).`); return; }
         setLoai(dt.loai);
         setMaDatTruoc(dt.id);
+        // Giữ các giá trị đã khóa lúc đặt (gia_goc, so_tien_giam, phan_tram_giam_hang,
+        // tien_coc, diem_su_dung) để số tiền hiển thị khớp với số tiền server sẽ tính.
+        setDtKhoa({
+          gia_goc: dt.gia_goc,
+          so_tien_giam: dt.so_tien_giam,
+          phan_tram_giam_hang: dt.phan_tram_giam_hang,
+          tien_coc: dt.tien_coc,
+          diem_su_dung: dt.diem_su_dung,
+        });
         setMaSuKien(dt.ma_su_kien ? String(dt.ma_su_kien) : '');
         setKhach({ id: dt.ma_khach_hang, ho_ten: dt.ho_ten, hang_thanh_vien: dt.hang_thanh_vien, diem_tich_luy: dt.diem_tich_luy });
         const built = (dt.chi_tiet || []).map((ct, i) => ({
@@ -85,8 +106,10 @@ export default function POS() {
           ten_truyen: ct.ten_truyen,
           gia_thue: Number(ct.gia_thue || 0),
           gia_ban: Number(ct.gia_ban || 0),
-          tien_coc: Number(ct.tien_coc || 0),
-          don_gia: Number(ct.gia_thue || 0),
+          // Cọc và đơn giá phải lấy giá trị ĐÃ KHÓA lúc đặt, không phải giá hiện tại
+          // của truyện (ct.* đến từ bảng truyen và sẽ đổi nếu quản trị sửa giá).
+          tien_coc: Number(dt.tien_coc || ct.tien_coc || 0),
+          don_gia: Number(dt.loai === 'thue' ? (dt.gia_goc ?? ct.gia_thue) : ct.gia_thue),
           ngay_hen_tra: todayPlus(3),
           diem_su_dung: i === 0 ? Number(dt.diem_su_dung || 0) : 0,
         }));
@@ -176,19 +199,46 @@ export default function POS() {
 
   const totals = useMemo(() => {
     let tongCoc = 0, tongThu = 0;
+    const hang = khach ? khach.hang_thanh_vien : null;
+    // Đơn đặt trước đã khóa giá/giảm/điểm lúc đặt: hiển thị đúng những giá trị đó
+    // (dt.* do server khóa), không tính lại theo cấu hình hiện tại.
+    const giamHangLock = maDatTruoc ? Number(dtKhoa?.phan_tram_giam_hang || 0) : null;
+    const diemDonLock = maDatTruoc ? Number(dtKhoa?.diem_su_dung || 0) : null;
+    let diemConLai = Number(khach?.diem_tich_luy || 0);
+    let diemDonConLai = diemDonLock;
     for (const r of rows) {
       tongCoc += Number(r.tien_coc || 0);
       if (loai === 'thue') {
-        tongThu += Math.max(0, Number(r.don_gia || 0) - giamVoucherTri(Number(r.don_gia || 0)));
+        // Server (phieuThueController.js:138): donGia = gia_goc - so_tien_giam
+        const giaGoc = maDatTruoc ? Number(dtKhoa?.gia_goc ?? r.gia_thue ?? 0) : Number(r.don_gia || 0);
+        const giam = maDatTruoc
+          ? Number(dtKhoa?.so_tien_giam || 0)
+          : giamVoucherTri(Number(r.don_gia || 0));
+        tongThu += Math.max(0, giaGoc - giam);
       } else {
-        const giamHang = khach ? (GIAM_HANG[khach.hang_thanh_vien] || 0) / 100 * Number(r.gia_ban || 0) : 0;
-        const giamSK = giamVoucherTri(Number(r.gia_ban || 0));
-        const diem = khach?.hang_thanh_vien === 'vip' ? Math.min(Number(r.diem_su_dung || 0) * 200, Number(r.gia_ban || 0) - giamHang - giamSK) : 0;
-        tongThu += Math.max(0, Number(r.gia_ban || 0) - giamHang - giamSK - diem);
+        const giaGoc = maDatTruoc ? Number(dtKhoa?.gia_goc ?? r.gia_ban ?? 0) : Number(r.gia_ban || 0);
+        const pct = giamHangLock !== null ? giamHangLock : (hang ? (giamHangTheoHang[hang] || 0) : 0);
+        const giamHang = (giaGoc * pct) / 100;
+        const giamSK = maDatTruoc
+          ? Number(dtKhoa?.so_tien_giam || 0)
+          : giamVoucherTri(giaGoc);
+        let thanhTien = Math.max(0, giaGoc - giamHang - giamSK);
+        // Server (phieuBanController.js:112-118): chỉ VIP, cap theo điểm khách,
+        // số tiền còn lại và số điểm đã cam kết nếu là đơn đặt trước.
+        let diem = 0;
+        if (hang === 'vip') {
+          const diemYeuCau = diemDonLock !== null ? diemDonConLai : Number(r.diem_su_dung || 0);
+          const cap = Math.min(diemYeuCau, diemConLai, Math.floor(thanhTien / tienMoiDiem));
+          diem = Math.max(0, cap);
+          thanhTien = Math.max(0, thanhTien - diem * tienMoiDiem);
+          diemConLai -= diem;
+          if (diemDonConLai !== null) diemDonConLai -= diem;
+        }
+        tongThu += thanhTien;
       }
     }
     return { tongCoc, tongThu, tongTra: tongCoc + tongThu };
-  }, [rows, loai, khach, maSuKien, suKiens]);
+  }, [rows, loai, khach, maSuKien, suKiens, maDatTruoc, dtKhoa, giamHangTheoHang, tienMoiDiem]);
 
   function setRow(i, k, v) {
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
@@ -248,6 +298,7 @@ export default function POS() {
     setKhachLe({ ten: '', sdt: '' });
     setSdtInput('');
     setMaDatTruoc(null);
+    setDtKhoa(null);
     setMaSuKien('');
     setTienTra('');
   }
@@ -300,7 +351,7 @@ export default function POS() {
               <div className="pos-khach">
                 <div style={{ minWidth: 0 }}>
                   <b>{khach.ho_ten}</b> <Badge type="hang" value={khach.hang_thanh_vien} />
-                  <div className="muted">{khach.so_dien_thoai} · {fmt(khach.diem_tich_luy)} điểm {khach.hang_thanh_vien === 'vip' ? '(1 điểm = 200đ)' : ''}</div>
+                  <div className="muted">{khach.so_dien_thoai} · {fmt(khach.diem_tich_luy)} điểm {khach.hang_thanh_vien === 'vip' ? `(1 điểm = ${fmt(tienMoiDiem)}đ)` : ''}</div>
                 </div>
                 <button className="secondary small" disabled={!!maDatTruoc} onClick={() => setKhach(null)}>Bỏ chọn</button>
               </div>
@@ -360,11 +411,23 @@ export default function POS() {
               </thead>
               <tbody>
                 {rows.map((r, i) => {
-                  const gia = loai === 'thue' ? Number(r.don_gia || 0) : Number(r.gia_ban || 0);
-                  const giamHang = loai === 'mua' && khach ? (GIAM_HANG[khach.hang_thanh_vien] || 0) / 100 * gia : 0;
-                  const giamSK = giamVoucherTri(gia);
-                  const diem = loai === 'mua' && khach?.hang_thanh_vien === 'vip' ? Math.min(Number(r.diem_su_dung || 0) * 200, Math.max(0, gia - giamHang - giamSK)) : 0;
-                  const thanhTien = loai === 'thue' ? Math.max(0, gia - giamSK) : Math.max(0, gia - giamHang - giamSK - diem);
+                  // Cùng công thức với `totals` để từng dòng khớp tổng và khớp server.
+                  const hang = khach ? khach.hang_thanh_vien : null;
+                  const giaGoc = maDatTruoc
+                    ? Number(dtKhoa?.gia_goc ?? (loai === 'thue' ? r.gia_thue : r.gia_ban) ?? 0)
+                    : (loai === 'thue' ? Number(r.don_gia || 0) : Number(r.gia_ban || 0));
+                  const gia = giaGoc;
+                  const pct = maDatTruoc ? Number(dtKhoa?.phan_tram_giam_hang || 0) : (hang ? (giamHangTheoHang[hang] || 0) : 0);
+                  const giamHang = loai === 'mua' ? (gia * pct) / 100 : 0;
+                  const giamSK = maDatTruoc ? Number(dtKhoa?.so_tien_giam || 0) : giamVoucherTri(gia);
+                  let diem = 0;
+                  if (loai === 'mua' && hang === 'vip') {
+                    const diemYeuCau = maDatTruoc ? Number(dtKhoa?.diem_su_dung || 0) : Number(r.diem_su_dung || 0);
+                    diem = Math.max(0, Math.min(diemYeuCau, Number(khach?.diem_tich_luy || 0), Math.floor(Math.max(0, gia - giamHang - giamSK) / tienMoiDiem)));
+                  }
+                  const thanhTien = loai === 'thue'
+                    ? Math.max(0, gia - giamSK)
+                    : Math.max(0, gia - giamHang - giamSK - diem * tienMoiDiem);
                   return (
                     <tr key={i}>
                       <td>
@@ -401,7 +464,7 @@ export default function POS() {
                       )}
                       {loai === 'mua' && (
                         <td>
-                          <input type="number" min="0" style={{ width: 80 }} disabled={!(khach && khach.hang_thanh_vien === 'vip')} title={khach?.hang_thanh_vien === 'vip' ? `1 điểm = 200đ (tối đa ${fmt(Math.floor(Math.max(0, gia - giamHang - giamSK) / 200))} điểm)` : 'Chỉ khách VIP'} value={r.diem_su_dung} onChange={(e) => setRow(i, 'diem_su_dung', e.target.value)} />
+                          <input type="number" min="0" style={{ width: 80 }} disabled={!(khach && khach.hang_thanh_vien === 'vip')} title={khach?.hang_thanh_vien === 'vip' ? `1 điểm = ${fmt(tienMoiDiem)}đ (tối đa ${fmt(Math.floor(Math.max(0, gia - giamHang - giamSK) / tienMoiDiem))} điểm)` : 'Chỉ khách VIP'} value={r.diem_su_dung} onChange={(e) => setRow(i, 'diem_su_dung', e.target.value)} />
                         </td>
                       )}
                       <td><b>{fmt(thanhTien)}₫</b></td>

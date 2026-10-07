@@ -43,7 +43,8 @@ async function myDatTruoc(req, res) {
     const maKhach = await myKhach(req);
     const [rows] = await query(
       'SELECT dt.id, dt.loai, dt.ngay_dat, dt.han_nhan, dt.khung_gio, dt.ma_su_kien, dt.diem_su_dung, dt.trang_thai, ' +
-      'sk.ten_su_kien, GROUP_CONCAT(t.ten_truyen SEPARATOR ", ") AS danh_sach_truyen ' +
+      'sk.ten_su_kien, GROUP_CONCAT(t.ten_truyen SEPARATOR ", ") AS danh_sach_truyen, ' +
+      'GROUP_CONCAT(DISTINCT t.id ORDER BY t.id) AS ds_ma_truyen ' +
       'FROM dattruoc dt ' +
       'LEFT JOIN sukiengiamgia sk ON sk.id = dt.ma_su_kien ' +
       'LEFT JOIN chitietdattruoc cdt ON cdt.ma_dat_truoc = dt.id ' +
@@ -52,8 +53,11 @@ async function myDatTruoc(req, res) {
       'WHERE dt.ma_khach_hang = ? GROUP BY dt.id, sk.ten_su_kien ORDER BY dt.id DESC',
       [maKhach]
     );
-    return res.json(rows);
+    return res.json(
+      rows.map((r) => ({ ...r, ds_ma_truyen: String(r.ds_ma_truyen || '').split(',').filter(Boolean).map(Number) }))
+    );
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ message: err.message });
     return res.status(500).json({ message: 'Lỗi máy chủ.', error: err.message });
   }
 }

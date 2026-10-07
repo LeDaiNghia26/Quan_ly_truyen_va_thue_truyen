@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import api, { getErrorMessage } from '../api';
@@ -6,30 +6,37 @@ import { C, fmtDate, trangThaiDon } from '../theme';
 
 const COLOR = { cho_nhan: C.accent, da_xac_nhan: C.success, da_huy: C.muted, qua_han: C.danger };
 
-export default function MyReservationsScreen({ navigation }) {
+export default function MyReservationsScreen({ navigation, embedded = false }) {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const firstLoad = useRef(true);
 
-  async function load() {
+  const load = useCallback(async () => {
+    if (firstLoad.current) setLoading(true);
+    else setRefreshing(true);
     try {
       const res = await api.get('/khach-hang/me/dat-truoc');
       setList(res.data || []);
     } catch (e) {
       console.warn(getErrorMessage(e));
     } finally {
+      firstLoad.current = false;
       setLoading(false);
+      setRefreshing(false);
     }
-  }
+  }, []);
 
-  useFocusEffect(useCallback(() => { load(); }, []));
+  // Mỗi lần focus lại màn hình sẽ nạp danh sách mới (đơn vừa đặt/hủy hiện ngay)
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Đơn đặt trước của tôi</Text>
+      <Text style={[styles.title, embedded && styles.titleEmbedded]}>Đơn đặt trước của tôi</Text>
       <FlatList
         data={list}
         keyExtractor={(item) => String(item.id)}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} />}
         contentContainerStyle={{ padding: 16 }}
         ListEmptyComponent={loading ? <ActivityIndicator style={{ marginTop: 50 }} /> : <Text style={styles.empty}>Bạn chưa có đơn đặt trước nào.</Text>}
         renderItem={({ item }) => {
@@ -57,6 +64,7 @@ export default function MyReservationsScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: C.bg },
   title: { fontSize: 20, fontWeight: '800', color: C.text, paddingHorizontal: 16, paddingTop: 56, paddingBottom: 4 },
+  titleEmbedded: { paddingTop: 8, paddingBottom: 8 },
   card: { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 12 },
   top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   id: { fontSize: 14, fontWeight: '800', color: C.text },

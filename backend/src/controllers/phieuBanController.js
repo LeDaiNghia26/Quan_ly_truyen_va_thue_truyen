@@ -264,7 +264,9 @@ async function createPhieuBan(req, res) {
     });
     return res.status(201).json({ message: 'Lập phiếu bán thành công.', id: result });
   } catch (err) {
-    return res.status(err.status || 500).json({ message: err.message });
+    // Chỉ trả message cho lỗi nghiệp vụ và ghi status; log hệ thống (DB) không trả chi tiết.
+    if (err.status) return res.status(err.status).json({ message: err.message });
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 }
 
@@ -333,7 +335,9 @@ async function huyPhieuBan(req, res) {
     });
     return res.json({ message: 'Đã hủy phiếu bán.', id: Number(id), so_dau: result.so_dau, diem_hoan: result.diem_hoan });
   } catch (err) {
-    return res.status(err.status || 500).json({ message: err.message });
+    // Chỉ trả message cho lỗi nghiệp vụ và ghi status; log hệ thống (DB) không trả chi tiết.
+    if (err.status) return res.status(err.status).json({ message: err.message });
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 }
 

@@ -150,7 +150,9 @@ async function createPhieuTra(req, res) {
       so_tien_khach_tra_them: result.so_tien_khach_tra_them,
     });
   } catch (err) {
-    return res.status(err.status || 500).json({ message: err.message });
+    // Chỉ trả message cho lỗi nghiệp vụ và ghi status; log hệ thống (DB) không trả chi tiết.
+    if (err.status) return res.status(err.status).json({ message: err.message });
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 }
 
@@ -196,7 +198,9 @@ async function baoMatTruyen(req, res) {
       so_tien_khach_tra_them: result.so_tien_khach_tra_them,
     });
   } catch (err) {
-    return res.status(err.status || 500).json({ message: err.message });
+    // Chỉ trả message cho lỗi nghiệp vụ và ghi status; log hệ thống (DB) không trả chi tiết.
+    if (err.status) return res.status(err.status).json({ message: err.message });
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 }
 

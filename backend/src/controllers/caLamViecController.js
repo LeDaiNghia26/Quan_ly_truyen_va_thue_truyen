@@ -201,7 +201,9 @@ async function chotCaLamViec(req, res) {
     await writeAudit(null, req, 'chot_ca', 'ca_lam_viec', Number(id), ghi_chu || `Chênh lệch ${result.chenh_lech}`);
     return res.json({ message: 'Chốt ca thành công.', id: Number(id), ...result });
   } catch (err) {
-    return res.status(err.status || 500).json({ message: err.message, error: err.message });
+    // Chỉ trả message cho lỗi nghiệp vụ và ghi status; log hệ thống không trả chi tiết.
+    if (err.status) return res.status(err.status).json({ message: err.message });
+    return res.status(500).json({ message: 'Lỗi máy chủ.' });
   }
 }
 

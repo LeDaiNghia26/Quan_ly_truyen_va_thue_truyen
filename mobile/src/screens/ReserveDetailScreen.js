@@ -4,7 +4,7 @@ import QRCode from 'react-native-qrcode-svg';
 import api, { getErrorMessage } from '../api';
 import { C, fmtDate, trangThaiDon } from '../theme';
 
-export default function ReserveDetailScreen({ route }) {
+export default function ReserveDetailScreen({ route, navigation }) {
   const { id } = route.params;
   const [don, setDon] = useState(null);
   const [cfg, setCfg] = useState(null);
@@ -89,6 +89,10 @@ export default function ReserveDetailScreen({ route }) {
         ))}
       </View>
 
+      <TouchableOpacity style={styles.xemDon} onPress={() => navigation.navigate('Danh sách đặt trước')}>
+        <Text style={styles.xemDonText}>📋 Xem đơn của tôi</Text>
+      </TouchableOpacity>
+
       {coTheHuy && (
         <TouchableOpacity style={styles.huy} onPress={() => Alert.alert('Hủy đơn', 'Hủy đơn đặt trước này?', [{ text: 'Không' }, { text: 'Hủy đơn', style: 'destructive', onPress: huy }])} disabled={busy}>
           <Text style={styles.huyText}>{busy ? 'Đang hủy...' : 'Hủy đơn đặt trước'}</Text>
@@ -116,4 +120,6 @@ const styles = StyleSheet.create({
   step: { fontSize: 13, color: C.sub, lineHeight: 22 },
   huy: { marginTop: 14, borderWidth: 1, borderColor: C.danger, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
   huyText: { color: C.danger, fontWeight: '700' },
+  xemDon: { marginTop: 14, backgroundColor: C.primary, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
+  xemDonText: { color: '#fff', fontWeight: '800' },
 });

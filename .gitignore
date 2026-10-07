@@ -33,3 +33,7 @@ opencode/
 
 # QA project (separate repo)
 QA-QuanLyTruyen/
+QA-AgriConnect/
+
+# Temporary debug scripts
+_tmp_*.js

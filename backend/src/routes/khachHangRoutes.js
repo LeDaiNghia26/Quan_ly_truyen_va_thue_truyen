@@ -13,7 +13,9 @@ router.get('/me/thong-bao', requireAuth, requireRole('customer'), me.myNotificat
   router.get('/me/danh-gia', requireAuth, requireRole('customer'), me.myDanhGia);
 router.put('/me/thong-bao/:id/read', requireAuth, requireRole('customer'), me.markRead);
 
-router.get('/', requireAuth, requireRole('admin'), khachHang.listKhachHang);
+// Nhân viên có danh sách khách hàng chỉ khi là phiếu bán/thuê sách.
+// Các thao tác nhạy cảm (xóa, khóa, đặt lại mật khẩu, xem chi tiết) chỉ dành cho admin.
+router.get('/', requireAuth, requireRole('admin', 'staff'), khachHang.listKhachHang);
 router.get('/tim', requireAuth, requireRole('admin', 'staff'), khachHang.timKhach);
 router.get('/lich-su', requireAuth, requireRole('admin', 'staff'), khachHang.lichSuKhach);
 router.post('/tao-tai-quay', requireAuth, requireRole('admin', 'staff'), khachHang.taoNhanhAtQuay);

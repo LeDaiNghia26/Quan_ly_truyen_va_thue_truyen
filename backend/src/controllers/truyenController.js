@@ -24,14 +24,26 @@ async function listTruyen(req, res) {
       'JOIN TheLoai tl2 ON tl2.id = ttl.ma_the_loai WHERE ttl.ma_truyen = t.id) AS the_loai_ten, ' +
       '(SELECT GROUP_CONCAT(ttl.ma_the_loai SEPARATOR ",") FROM TruyenTheLoai ttl WHERE ttl.ma_truyen = t.id) AS the_loai_ids, ' +
       'ROUND(AVG(dg.so_sao), 1) AS danh_gia_tb, COUNT(DISTINCT dg.id) AS so_danh_gia, ' +
-      'SUM(CASE WHEN bs.trang_thai = "san_sang" THEN 1 ELSE 0 END) AS so_san_sang, ' +
-      'SUM(CASE WHEN bs.trang_thai = "dang_giu" THEN 1 ELSE 0 END) AS so_dang_giu, ' +
-      'SUM(CASE WHEN bs.trang_thai = "dang_cho_thue" THEN 1 ELSE 0 END) AS so_dang_cho_thue, ' +
-      'SUM(CASE WHEN bs.trang_thai = "da_ban" THEN 1 ELSE 0 END) AS so_da_ban, ' +
-      'SUM(CASE WHEN bs.trang_thai = "ngung_luu_hanh" THEN 1 ELSE 0 END) AS so_ngung_luu_hanh, ' +
-      'COUNT(DISTINCT bs.id) AS tong_ban_sao ' +
+      // Tồn kho gom từ subquery theo bansao, KHÔNG join chung với danhgia.
+      // Nếu LEFT JOIN cả hai rồi SUM(CASE...), mỗi bản sao bị đếm lặp theo số giờ giữ
+      // (Nếu bản sao được giữ ở nhiều thời điểm) thì so_san_sang/so_dang_giu bị nhầm lẫn.
+      'COALESCE(bs.so_san_sang, 0) AS so_san_sang, ' +
+      'COALESCE(bs.so_dang_giu, 0) AS so_dang_giu, ' +
+      'COALESCE(bs.so_dang_cho_thue, 0) AS so_dang_cho_thue, ' +
+      'COALESCE(bs.so_da_ban, 0) AS so_da_ban, ' +
+      'COALESCE(bs.so_ngung_luu_hanh, 0) AS so_ngung_luu_hanh, ' +
+      'COALESCE(bs.tong_ban_sao, 0) AS tong_ban_sao ' +
       'FROM truyen t ' +
-      'LEFT JOIN bansao bs ON bs.ma_truyen = t.id ' +
+      'LEFT JOIN (' +
+      '  SELECT ma_truyen, ' +
+      '    SUM(trang_thai = "san_sang") AS so_san_sang, ' +
+      '    SUM(trang_thai = "dang_giu") AS so_dang_giu, ' +
+      '    SUM(trang_thai = "dang_cho_thue") AS so_dang_cho_thue, ' +
+      '    SUM(trang_thai = "da_ban") AS so_da_ban, ' +
+      '    SUM(trang_thai = "ngung_luu_hanh") AS so_ngung_luu_hanh, ' +
+      '    COUNT(*) AS tong_ban_sao ' +
+      '  FROM bansao GROUP BY ma_truyen' +
+      ') bs ON bs.ma_truyen = t.id ' +
       'LEFT JOIN danhgia dg ON dg.ma_truyen = t.id ';
     const params = [];
     const conds = [];
@@ -80,7 +92,9 @@ async function getTruyen(req, res) {
       'SELECT t.*, ' +
       '(SELECT GROUP_CONCAT(tl2.ten_the_loai SEPARATOR ", ") FROM TruyenTheLoai ttl ' +
       'JOIN TheLoai tl2 ON tl2.id = ttl.ma_the_loai WHERE ttl.ma_truyen = t.id) AS the_loai_ten, ' +
-      'ROUND(AVG(dg.so_sao), 1) AS danh_gia_tb, COUNT(DISTINCT dg.id) AS so_danh_gia ' +
+      'ROUND(AVG(dg.so_sao), 1) AS danh_gia_tb, COUNT(DISTINCT dg.id) AS so_danh_gia, ' +
+      '(SELECT COUNT(*) FROM bansao b2 WHERE b2.ma_truyen = t.id AND b2.trang_thai = "san_sang") AS so_san_sang, ' +
+      '(SELECT COUNT(*) FROM bansao b3 WHERE b3.ma_truyen = t.id AND b3.trang_thai = "dang_giu") AS so_dang_giu ' +
       'FROM truyen t ' +
       'LEFT JOIN danhgia dg ON dg.ma_truyen = t.id WHERE t.id = ? ' +
       'GROUP BY t.id',

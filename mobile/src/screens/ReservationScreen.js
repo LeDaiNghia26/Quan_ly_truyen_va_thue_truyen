@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import api, { getErrorMessage } from '../api';
@@ -18,12 +18,28 @@ export default function ReservationScreen({ route, navigation }) {
   const [cfg, setCfg] = useState({ hang_thanh_vien: [], quy_doi: [] });
   const [showDate, setShowDate] = useState(false);
   const [nut, setNut] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [con, setCon] = useState(null);
+  const [donTrung, setDonTrung] = useState([]);
+  const daCanhBao = useRef(false);
 
   useEffect(() => {
     api.get('/su-kien-giam-gia/cong-khai').then((r) => setSuKien(r.data)).catch(() => {});
     api.get('/cau-hinh').then((r) => setCfg(r.data)).catch(() => {});
+    // Tồn kho lúc mở màn hình (truyện truyền qua params có thể đã cũ)
+    api.get(`/truyen/${truyen.id}`).then((r) => setCon(Number(r.data.so_san_sang) || 0)).catch(() => {});
+    // Cảnh báo nếu khách đang có đơn chờ nhận cho chính truyện này
+    api.get('/khach-hang/me/dat-truoc').then((r) => {
+      setDonTrung(
+        (r.data || []).filter(
+          (d) => d.trang_thai === 'cho_nhan' && (d.ds_ma_truyen || []).map(Number).includes(Number(truyen.id))
+        )
+      );
+    }).catch(() => {});
     setNut(loai === 'thue' ? 'Xác nhận đặt trước thuê' : 'Xác nhận đặt trước mua');
-  }, []);
+  }, [truyen.id, loai]);
+
+  const hetHang = con === 0;
 
   const tienMoiDiem = Number((cfg.quy_doi || []).find((x) => x.ten_quy_tac === 'tien_moi_diem')?.gia_tri) || 200;
 
@@ -50,6 +66,23 @@ export default function ReservationScreen({ route, navigation }) {
 
   async function submit() {
     if (!hanNhan) return Alert.alert('Nhắc nhở', 'Chọn ngày hẹn đến quầy.');
+    if (hetHang) {
+      return Alert.alert('Truyện đã hết hàng', 'Tất cả bản sao của truyện này đang được giữ hoặc cho mượn. Bạn vui lòng thử lại sau.');
+    }
+    // Vẫn cho phép đặt thêm, nhưng phải hỏi khách trước khi tạo đơn chồng lên đơn chờ nhận
+    if (donTrung.length > 0 && !daCanhBao.current) {
+      daCanhBao.current = true;
+      const ds = donTrung.map((d) => '#' + String(d.id).padStart(4, '0')).join(', ');
+      return Alert.alert(
+        'Bạn đang có đơn chờ nhận',
+        `Bạn đã có đơn chờ nhận cho truyện này (${ds}). Bạn vẫn có thể đặt thêm đơn mới, nhưng sẽ tồn tại nhiều đơn cùng truyện.`,
+        [
+          { text: 'Để sau', style: 'cancel' },
+          { text: 'Vẫn đặt', onPress: () => submit() },
+        ]
+      );
+    }
+    setBusy(true);
     try {
       const res = await api.post('/dat-truoc', {
         ma_truyen: truyen.id,
@@ -60,9 +93,24 @@ export default function ReservationScreen({ route, navigation }) {
         diem_su_dung: loai === 'mua' && kq.diemDung > 0 ? kq.diemDung : undefined,
       });
       await refreshProfile().catch(() => {});
-      navigation.replace('Mã đặt trước', { id: res.data.id, chiTiet: res.data.chi_tiet });
+      Alert.alert(
+        'Đặt trước thành công',
+        `Đơn #${String(res.data.id).padStart(4, '0')} đã được ghi nhận. Hãy đến quầy đúng ngày hẹn và đưa mã QR cho nhân viên.`,
+        [{ text: 'OK', onPress: () => navigation.replace('Mã đặt trước', { id: res.data.id, chiTiet: res.data.chi_tiet }) }]
+      );
     } catch (e) {
-      Alert.alert('Không đặt được', getErrorMessage(e));
+      if (e.response?.data?.code === 'OUT_OF_STOCK') {
+        setCon(0);
+        Alert.alert(
+          'Truyện vừa hết hàng',
+          'Rất tiếc, phần sách sẵn sàng cuối cùng vừa có người khác đặt trước. Bạn vui lòng thử lại sau.',
+          [{ text: 'OK', onPress: () => navigation.goBack() }]
+        );
+      } else {
+        Alert.alert('Không đặt được', getErrorMessage(e));
+      }
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -135,8 +183,32 @@ export default function ReservationScreen({ route, navigation }) {
         <Text style={styles.note}>Mang CCCD đến quầy trong ngày/hengiờ đã chọn. Quầy sẽ liên hệ để xác nhận sách sẵn sàng.</Text>
       </View>
 
-      <TouchableOpacity style={styles.submit} onPress={submit}>
-        <Text style={styles.submitText}>{nut}</Text>
+      {hetHang && (
+        <View style={styles.warnBox}>
+          <Text style={styles.warnTitle}>Truyện hiện đã hết hàng</Text>
+          <Text style={styles.warnText}>Tất cả bản sao đang được giữ hoặc cho mượn. Bạn không thể đặt trước truyện này lúc này.</Text>
+        </View>
+      )}
+
+      {!hetHang && donTrung.length > 0 && (
+        <View style={styles.warnBox}>
+          <Text style={styles.warnTitle}>Bạn đang có {donTrung.length} đơn chờ nhận cho truyện này</Text>
+          <Text style={styles.warnText}>
+            {donTrung.map((d) => '#' + String(d.id).padStart(4, '0')).join(', ')} — bạn vẫn có thể đặt thêm nếu thực sự cần.
+          </Text>
+        </View>
+      )}
+
+      <TouchableOpacity
+        style={[styles.submit, (busy || hetHang) && styles.submitOff]}
+        onPress={submit}
+        disabled={busy || hetHang}
+      >
+        {busy ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.submitText}>{hetHang ? 'Hết hàng — không thể đặt' : nut}</Text>
+        )}
       </TouchableOpacity>
     </ScrollView>
   );
@@ -172,5 +244,9 @@ const styles = StyleSheet.create({
   empty: { color: C.muted, fontSize: 13 },
   diemRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   submit: { backgroundColor: C.primary, borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 22 },
+  submitOff: { opacity: 0.6 },
   submitText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  warnBox: { backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fdba74', borderRadius: 12, padding: 12, marginTop: 18 },
+  warnTitle: { fontSize: 14, fontWeight: '800', color: '#c2410c' },
+  warnText: { fontSize: 13, color: '#9a3412', marginTop: 4, lineHeight: 19 },
 });

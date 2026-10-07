@@ -22,11 +22,19 @@ export default function DatTruoc() {
   const [lyDoHop, setLyDoHop] = useState('');
   const [lyDoMsg, setLyDoMsg] = useState('');
   const [busyLyDo, setBusyLyDo] = useState(false);
+  // Giá trị quy đổi điểm lấy từ cấu hình server (không hardcode 200).
+  const [tienMoiDiem, setTienMoiDiem] = useState(200);
 
   async function load() {
     try { const r = await api.get('/dat-truoc'); setItems(r.data); } catch (e) { setMsg(getErrorMessage(e)); }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    api.get('/cau-hinh').then((r) => {
+      const qd = (r.data.quy_doi || []).find((x) => x.ten_quy_tac === 'tien_moi_diem');
+      if (qd) setTienMoiDiem(Number(qd.gia_tri) || 200);
+    }).catch(() => {});
+  }, []);
 
   const counted = useMemo(() => {
     const c = {};
@@ -137,7 +145,7 @@ export default function DatTruoc() {
                 <div>Hạng / điểm: <b>{detail.hang_thanh_vien}</b> / <b>{detail.diem_tich_luy}đ</b></div>
                 <div>Hạn nhận: <b>{fmtDate(detail.han_nhan)}</b> {detail.khung_gio && <b>({detail.khung_gio})</b>}</div>
               </div>
-              {detail.diem_su_dung > 0 && <p className="msg ok" style={{ margin: '10px 0' }}>Khách cam kết dùng <b>{detail.diem_su_dung} điểm</b> khi mua (giảm {fmt(detail.diem_su_dung * 200)}đ).</p>}
+              {detail.diem_su_dung > 0 && <p className="msg ok" style={{ margin: '10px 0' }}>Khách cam kết dùng <b>{detail.diem_su_dung} điểm</b> khi mua (giảm {fmt(detail.diem_su_dung * tienMoiDiem)}đ).</p>}
               {Number(detail.gia_goc || 0) > 0 && detail.loai === 'thue' && (
                 <p className="msg ok" style={{ margin: '10px 0' }}>
                   Giá thuê cam kết: <b>{fmt(Math.max(0, Number(detail.gia_goc) - Number(detail.so_tien_giam || 0)))}₫</b>

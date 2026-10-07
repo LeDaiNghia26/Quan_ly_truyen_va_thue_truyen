@@ -57,8 +57,14 @@ export default function AuthScreen({ navigation }) {
     setBusy(true);
     try {
       const r = await api.post('/auth/send-otp', { so_dien_thoai: sdt, loai: 'dang_ky' });
-      setOtpHint(r.data.ma_otp_hienthi || '');
-      Alert.alert('Đã gửi OTP', `SMS mô phỏng: mã OTP của bạn là ${r.data.ma_otp_hienthi}`);
+      // Mã OTP chỉ được trả về khi backend bật DEV_EXPOSE_OTP (chế độ demo).
+      if (r.data.ma_otp_hienthi) {
+        setOtpHint(r.data.ma_otp_hienthi);
+        Alert.alert('Đã gửi OTP', `SMS mô phỏng: mã OTP của bạn là ${r.data.ma_otp_hienthi}`);
+      } else {
+        setOtpHint('');
+        Alert.alert('Đã gửi OTP', 'Mã OTP đã được gửi tới số điện thoại của bạn.');
+      }
     } catch (e) {
       Alert.alert('Lỗi', getErrorMessage(e));
     } finally {
@@ -68,9 +74,10 @@ export default function AuthScreen({ navigation }) {
 
   async function hRegister() {
     if (!hoTen || !sdt || !matKhau) return Alert.alert('Nhắc nhở', 'Hãy điền đủ tên, số điện thoại và mật khẩu.');
+    if (!otp.trim()) return Alert.alert('Nhắc nhở', 'Hãy bấm "Gửi OTP" và nhập mã xác thực để đăng ký.');
     setBusy(true);
     try {
-      await register({ ho_ten: hoTen, so_dien_thoai: sdt, mat_khau: matKhau, ma_otp: otp, so_thich: soThich });
+      await register({ ho_ten: hoTen, so_dien_thoai: sdt, mat_khau: matKhau, ma_otp: otp.trim(), so_thich: soThich });
     } catch (e) {
       Alert.alert('Lỗi', getErrorMessage(e));
     } finally {

@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Image } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import api, { getErrorMessage, imageUrl } from '../api';
 import { StarRating } from '../components/BookCard';
 import { useAuth } from '../AuthContext';
@@ -11,13 +12,14 @@ export default function DetailScreen({ route, navigation }) {
   const [t, setT] = useState(null);
   const [fav, setFav] = useState(false);
   const [busy, setBusy] = useState(false);
+  const daDangNhap = !!user;
 
-  async function load() {
+  const load = useCallback(async () => {
     setBusy(true);
     try {
       const [detail, favRes] = await Promise.all([
         api.get(`/truyen/${truyenId}`),
-        user ? api.get('/yeu-thich') : Promise.resolve({ data: [] }),
+        daDangNhap ? api.get('/yeu-thich') : Promise.resolve({ data: [] }),
       ]);
       setT(detail.data);
       setFav(favRes.data.some((f) => f.ma_truyen === Number(truyenId)));
@@ -26,9 +28,13 @@ export default function DetailScreen({ route, navigation }) {
     } finally {
       setBusy(false);
     }
-  }
+  }, [truyenId, daDangNhap]);
 
-  useEffect(() => { load(); }, [truyenId]);
+  // Refetch mỗi lần quay lại màn hình để tồn kho không bị cũ
+  // (ví dụ vừa đặt trước xong, bản sao đã chuyển sang "đang giữ")
+  useFocusEffect(useCallback(() => {
+    load();
+  }, [load]));
 
   async function toggleFav() {
     if (!user) return navigation.navigate('Đăng nhập');
@@ -42,8 +48,11 @@ export default function DetailScreen({ route, navigation }) {
 
   if (!t) return <View style={styles.center}><ActivityIndicator /></View>;
 
-  const con = t.ban_sao.filter((b) => b.trang_thai === 'san_sang').length;
-  const chiThue = Number(t.gia_thue) > 0 && con > 0;
+  // Ưu tiên số liệu tồn kho do backend tính sẵn; fallback đếm từ danh sách bản sao
+  const con = t.so_san_sang != null
+    ? Number(t.so_san_sang)
+    : t.ban_sao.filter((b) => b.trang_thai === 'san_sang').length;
+  const hetHang = con === 0;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -56,7 +65,14 @@ export default function DetailScreen({ route, navigation }) {
           </View>
         )}
         <View style={styles.heroInfo}>
-          <Text style={styles.title}>{t.ten_truyen}</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.title}>{t.ten_truyen}</Text>
+            {hetHang && (
+              <View style={styles.outBadge}>
+                <Text style={styles.outBadgeText}>Hết hàng</Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.author}>✍️ {t.tac_gia}</Text>
           <View style={styles.infoLine}><Text style={styles.infoLabel}>Thể loại:</Text><Text style={styles.infoVal}> {t.the_loai_ten || '—'}</Text></View>
           <View style={styles.infoLine}><Text style={styles.infoLabel}>Loại:</Text><Text style={styles.infoVal}> {{ TRUYEN_TRANH: 'Truyện tranh', TIEU_THUYET: 'Tiểu thuyết', TRUYEN_NGAN: 'Truyện ngắn', LIGHT_NOVEL: 'Light Novel' }[t.loai] || '—'}</Text></View>
@@ -86,6 +102,10 @@ export default function DetailScreen({ route, navigation }) {
           <Text style={styles.priceLabel}>Mua / đặt cọc (thuê)</Text>
           <Text style={styles.priceValRed}>{fmtVND(t.gia_ban)}</Text>
         </View>
+        <View style={styles.priceRow}>
+          <Text style={styles.priceLabel}>Bản sẵn sàng</Text>
+          <Text style={[styles.priceValRed, hetHang && styles.priceValGray]}>{hetHang ? 'Hết hàng' : `Còn ${con} bản`}</Text>
+        </View>
         <Text style={styles.hint}>Tiền cọc sẽ hoàn lại 100% khi bạn trả sách đúng hạn với tình trạng tốt.</Text>
       </View>
 
@@ -111,17 +131,21 @@ export default function DetailScreen({ route, navigation }) {
       ))}
 
       <View style={styles.cta}>
-        {chiThue && (
-          <TouchableOpacity style={[styles.btn, styles.btnBlue]} onPress={() => navigation.navigate('Đặt trước', { truyen: t, loai: 'thue' })}>
-            <Text style={styles.btnText}>Thuê {fmtVND(t.gia_thue)}/ngày</Text>
-          </TouchableOpacity>
-        )}
-        {con > 0 ? (
-          <TouchableOpacity style={[styles.btn, styles.btnRed]} onPress={() => navigation.navigate('Đặt trước', { truyen: t, loai: 'mua' })}>
-            <Text style={styles.btnText}>Mua {fmtVND(t.gia_ban)}</Text>
-          </TouchableOpacity>
+        {hetHang ? (
+          <View style={[styles.btn, styles.btnDisabled]}>
+            <Text style={styles.btnText}>Hết hàng — chưa có bản sẵn sàng</Text>
+          </View>
         ) : (
-          <View style={[styles.btn, styles.btnDisabled]}><Text style={styles.btnText}>Hết hàng</Text></View>
+          <>
+            {Number(t.gia_thue) > 0 && (
+              <TouchableOpacity style={[styles.btn, styles.btnBlue]} onPress={() => navigation.navigate('Đặt trước', { truyen: t, loai: 'thue' })}>
+                <Text style={styles.btnText}>Thuê {fmtVND(t.gia_thue)}/ngày</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={[styles.btn, styles.btnRed]} onPress={() => navigation.navigate('Đặt trước', { truyen: t, loai: 'mua' })}>
+              <Text style={styles.btnText}>Mua {fmtVND(t.gia_ban)}</Text>
+            </TouchableOpacity>
+          </>
         )}
       </View>
       <TouchableOpacity style={styles.favBtn} onPress={toggleFav}>
@@ -139,7 +163,10 @@ const styles = StyleSheet.create({
   coverBox: { width: 110, height: 148, borderRadius: 10, backgroundColor: C.primary, justifyContent: 'center', alignItems: 'center' },
   coverText: { color: '#fff', fontSize: 26, fontWeight: '800' },
   heroInfo: { flex: 1, marginLeft: 14 },
-  title: { fontSize: 19, fontWeight: '800', color: C.text },
+  title: { fontSize: 19, fontWeight: '800', color: C.text, flex: 1 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  outBadge: { backgroundColor: C.danger, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
+  outBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   author: { fontSize: 13, color: C.sub, marginTop: 4 },
   infoLine: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
   infoLabel: { fontSize: 13, color: C.sub },
@@ -157,6 +184,7 @@ const styles = StyleSheet.create({
   priceLabel: { fontSize: 14, color: C.text },
   priceValblue: { fontSize: 15, fontWeight: '800', color: C.primary },
   priceValRed: { fontSize: 15, fontWeight: '800', color: C.danger },
+  priceValGray: { color: C.muted },
   hint: { fontSize: 12, color: C.muted, marginTop: 8 },
   desc: { fontSize: 14, lineHeight: 22, color: C.sub },
   review: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 10 },

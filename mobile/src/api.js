@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Nếu chạy trên máy thật (quét QR Expo Go), đổi IP này thành địa chỉ IP LAN của máy tính
 // Cách tìm: chạy `ipconfig` trên CMD, lấy IPv4 của adapter đang dùng (ví dụ 192.168.1.10)
-const API_URL = 'http://192.168.1.202:5000/api';
+const API_URL = 'http://10.16.2.232:5000/api';
 
 export const SERVER_BASE = API_URL.replace(/\/api\/?$/, '');
 
